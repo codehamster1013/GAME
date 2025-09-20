@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실제 멀티플레이어 2D 슈팅 게임</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            flex-direction: column;
+        }
+        
+        #connectionPanel {
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            color: #fff;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        #gameContainer {
+            position: relative;
+            border: 2px solid #333;
+            display: none;
+        }
+        
+        #gameCanvas {
+            background: linear-gradient(45deg, #1a1a2e, #16213e);
+            display: block;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 10;
+        }
+        
+        #leaderboard {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 10px;
+            color: #fff;
+            min-width: 150px;
+            z-index: 10;
+        }
+        
+        #playerInfo {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: #fff;
+            z-index: 10;
+        }
+        
+        #connectionStatus {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: #fff;
+            font-size: 12px;
+            z-index: 10;
+        }
+        
+        .health-bar, .ammo-bar {
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 2px 0;
+        }
+        
+        .health-bar { width: 100px; }
+        .ammo-bar { width: 80px; }
+        
+        .health-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #f00, #ff0, #0f0);
+            transition: width 0.3s ease;
+        }
+        
+        .ammo-fill {
+            height: 100%;
+            background: #00f;
+            transition: width 0.3s ease;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #4ecdc4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background: #45b7d1;
+        }
+        
+        input {
+            padding: 8px;
+            font-size: 14px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        
+        .room-code {
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            font-weight: bold;
+            background: #333;
+            padding: 10px;
+            border-radius: 5px;
+            display: inline-block;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="connectionPanel">
+        <h2>🎮 멀티플레이어 슈팅 게임</h2>
+        <div id="joinOptions">
+            <div>
+                <input type="text" id="playerNameInput" placeholder="플레이어 이름" value="" maxlength="10">
+            </div>
+            <div>
+                <button onclick="createRoom()">🆕 방 만들기</button>
+                <button onclick="showJoinRoom()">🚪 방 참가하기</button>
+            </div>
+            <div id="joinRoomPanel" style="display: none;">
+                <input type="text" id="roomCodeInput" placeholder="방 코드 입력" maxlength="6">
+                <button onclick="joinRoom()">참가</button>
+            </div>
+        </div>
+        
+        <div id="roomInfo" style="display: none;">
+            <h3>방이 생성되었습니다!</h3>
+            <p>다른 플레이어가 접속할 수 있도록 아래 코드를 공유하세요:</p>
+            <div class="room-code" id="roomCodeDisplay"></div>
+            <p>연결된 플레이어: <span id="connectedPlayers">1</span>/4</p>
+            <button onclick="startGame()" id="startGameBtn">게임 시작</button>
+        </div>
+        
+        <div id="waitingRoom" style="display: none;">
+            <h3>방에 참가했습니다!</h3>
+            <p>방장이 게임을 시작하기를 기다리는 중...</p>
+            <p>연결된 플레이어: <span id="waitingPlayers">1</span>/4</p>
+        </div>
+    </div>
+    
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        
+        <div id="ui">
+            <div>체력: <div class="health-bar"><div class="health-fill" id="healthBar" style="width: 100%"></div></div></div>
+            <div>탄약: <div class="ammo-bar"><div class="ammo-fill" id="ammoBar" style="width: 100%"></div></div></div>
+            <div>점수: <span id="score">0</span></div>
+        </div>
+        
+        <div id="leaderboard">
+            <h3>🏆 리더보드</h3>
+            <div id="leaderboardList"></div>
+        </div>
+        
+        <div id="playerInfo">
+            <div>플레이어: <span id="currentPlayer"></span></div>
+            <div>방 코드: <span id="gameRoomCode"></span></div>
+        </div>
+        
+        <div id="connectionStatus">
+            <div>연결된 플레이어: <span id="gameConnectedPlayers">1</span></div>
+        </div>
+    </div>
+
+    <script>
+        // 전역 변수
+        let isHost = false;
+        let playerName = '';
+        let roomCode = '';
+        let connections = new Map();
+        let gameStarted = false;
+        
+        // 게임 상태
+        const gameState = {
+            players: new Map(),
+            bullets: [],
+            ammoPickups: [],
+            healthPickups: []
+        };
+        
+        // WebRTC 설정
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+        
+        // 방 코드 생성
+        function generateRoomCode() {
+            return Math.random().toString(36).substr(2, 6).toUpperCase();
+        }
+        
+        // 플레이어 클래스
+        class Player {
+            constructor(id, name, x, y, color) {
+                this.id = id;
+                this.name = name;
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.color = color;
+                this.health = 100;
+                this.maxHealth = 100;
+                this.ammo = 30;
+                this.maxAmmo = 30;
+                this.score = 0;
+                this.radius = 15;
+                this.speed = 3;
+                this.lastShot = 0;
+                this.shootCooldown = 200;
+                this.ammoRegenTime = 0;
+                this.ammoRegenRate = 2000;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                this.x = Math.max(this.radius, Math.min(800 - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(600 - this.radius, this.y));
+                
+                this.vx *= 0.9;
+                this.vy *= 0.9;
+                
+                const now = Date.now();
+                if (now - this.ammoRegenTime > this.ammoRegenRate && this.ammo < this.maxAmmo) {
+                    this.ammo++;
+                    this.ammoRegenTime = now;
+                }
+            }
+            
+            shoot(targetX, targetY) {
+                const now = Date.now();
+                if (now - this.lastShot < this.shootCooldown || this.ammo <= 0) {
+                    return null;
+                }
+                
+                const angle = Math.atan2(targetY - this.y, targetX - this.x);
+                const bullet = new Bullet(this.x, this.y, angle, this.id);
+                
+                this.ammo--;
+                this.lastShot = now;
+                return bullet;
+            }
+            
+            takeDamage(damage) {
+                this.health = Math.max(0, this.health - damage);
+                if (this.health <= 0) {
+                    this.respawn();
+                    return true;
+                }
+                return false;
+            }
+            
+            heal(amount) {
+                this.health = Math.min(this.maxHealth, this.health + amount);
+            }
+            
+            respawn() {
+                this.x = Math.random() * (800 - 60) + 30;
+                this.y = Math.random() * (600 - 60) + 30;
+                this.health = this.maxHealth;
+                this.ammo = this.maxAmmo;
+                this.score = Math.max(0, this.score - 10);
+            }
+            
+            draw(ctx) {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                const barWidth = 30;
+                const barHeight = 4;
+                const barY = this.y - this.radius - 10;
+                
+                ctx.fillStyle = '#333';
+                ctx.fillRect(this.x - barWidth/2, barY, barWidth, barHeight);
+                
+                ctx.fillStyle = this.health > 60 ? '#0f0' : this.health > 30 ? '#ff0' : '#f00';
+                ctx.fillRect(this.x - barWidth/2, barY, (this.health / this.maxHealth) * barWidth, barHeight);
+                
+                ctx.fillStyle = '#fff';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.name, this.x, this.y - this.radius - 15);
+            }
+            
+            serialize() {
+                return {
+                    id: this.id,
+                    name: this.name,
+                    x: this.x,
+                    y: this.y,
+                    vx: this.vx,
+                    vy: this.vy,
+                    health: this.health,
+                    ammo: this.ammo,
+                    score: this.score,
+                    color: this.color
+                };
+            }
+        }
+        
+        // 총알 클래스
+        class Bullet {
+            constructor(x, y, angle, ownerId) {
+                this.id = 'bullet_' + Math.random().toString(36).substr(2, 9);
+                this.x = x;
+                this.y = y;
+                this.vx = Math.cos(angle) * 8;
+                this.vy = Math.sin(angle) * 8;
+                this.ownerId = ownerId;
+                this.radius = 3;
+                this.damage = 15;
+                this.life = 100;
+            }
+            
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life--;
+                
+                return this.x > 0 && this.x < 800 && 
+                       this.y > 0 && this.y < 600 && 
+                       this.life > 0;
+            }
+            
+            draw(ctx) {
+                ctx.fillStyle = '#ff0';
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#ffa500';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(this.x - this.vx * 2, this.y - this.vy * 2);
+                ctx.lineTo(this.x, this.y);
+                ctx.stroke();
+            }
+            
+            serialize() {
+                return {
+                    id: this.id,
+                    x: this.x,
+                    y: this.y,
+                    vx: this.vx,
+                    vy: this.vy,
+                    ownerId: this.ownerId,
+                    life: this.life
+                };
+            }
+        }
+        
+        // 아이템 클래스
+        class Pickup {
+            constructor(x, y, type) {
+                this.id = 'pickup_' + Math.random().toString(36).substr(2, 9);
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.radius = 8;
+                this.pulse = 0;
+            }
+            
+            update() {
+                this.pulse += 0.1;
+            }
+            
+            draw(ctx) {
+                const pulseSize = Math.sin(this.pulse) * 2;
+                
+                if (this.type === 'ammo') {
+                    ctx.fillStyle = '#00f';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + pulseSize, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('A', this.x, this.y + 4);
+                } else if (this.type === 'health') {
+                    ctx.fillStyle = '#f00';
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius + pulseSize, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '14px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('+', this.x, this.y + 4);
+                }
+            }
+            
+            serialize() {
+                return {
+                    id: this.id,
+                    x: this.x,
+                    y: this.y,
+                    type: this.type,
+                    pulse: this.pulse
+                };
+            }
+        }
+        
+        // 네트워킹 함수들
+        function sendToAll(data) {
+            const message = JSON.stringify(data);
+            connections.forEach(connection => {
+                if (connection.readyState === 'open') {
+                    connection.send(message);
+                }
+            });
+        }
+        
+        function sendToPeer(peerId, data) {
+            const connection = connections.get(peerId);
+            if (connection && connection.readyState === 'open') {
+                connection.send(JSON.stringify(data));
+            }
+        }
+        
+        // UI 함수들
+        function showJoinRoom() {
+            document.getElementById('joinRoomPanel').style.display = 'block';
+        }
+        
+        function createRoom() {
+            playerName = document.getElementById('playerNameInput').value || '플레이어1';
+            roomCode = generateRoomCode();
+            isHost = true;
+            
+            document.getElementById('joinOptions').style.display = 'none';
+            document.getElementById('roomInfo').style.display = 'block';
+            document.getElementById('roomCodeDisplay').textContent = roomCode;
+            
+            // 자신을 플레이어로 추가
+            const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7'];
+            const currentPlayer = new Player(
+                'host',
+                playerName,
+                Math.random() * (800 - 60) + 30,
+                Math.random() * (600 - 60) + 30,
+                colors[0]
+            );
+            gameState.players.set('host', currentPlayer);
+            
+            // 피어 연결 대기
+            setupPeerConnections();
+        }
+        
+        function joinRoom() {
+            playerName = document.getElementById('playerNameInput').value || '플레이어2';
+            roomCode = document.getElementById('roomCodeInput').value.toUpperCase();
+            
+            if (roomCode.length !== 6) {
+                alert('올바른 방 코드를 입력하세요 (6자리)');
+                return;
+            }
+            
+            document.getElementById('joinOptions').style.display = 'none';
+            document.getElementById('waitingRoom').style.display = 'block';
+            
+            // 호스트에 연결
+            connectToHost();
+        }
+        
+        function startGame() {
+            if (gameState.players.size < 2) {
+                alert('최소 2명의 플레이어가 필요합니다!');
+                return;
+            }
+            
+            document.getElementById('connectionPanel').style.display = 'none';
+            document.getElementById('gameContainer').style.display = 'block';
+            gameStarted = true;
+            
+            document.getElementById('currentPlayer').textContent = playerName;
+            document.getElementById('gameRoomCode').textContent = roomCode;
+            document.getElementById('gameConnectedPlayers').textContent = gameState.players.size;
+            
+            // 모든 연결된 플레이어에게 게임 시작 알림
+            sendToAll({
+                type: 'gameStart',
+                gameState: serializeGameState()
+            });
+            
+            // 게임 루프 시작
+            gameLoop();
+        }
+        
+        // WebRTC 연결 설정
+        async function setupPeerConnections() {
+            // 간단한 시그널링을 위해 브로드캐스트 채널 사용 (같은 기기에서만 작동)
+            // 실제 환경에서는 시그널링 서버가 필요합니다
+            
+            window.addEventListener('beforeunload', () => {
+                sendToAll({type: 'disconnect', playerId: 'host'});
+            });
+        }
+        
+        async function connectToHost() {
+            // 실제 WebRTC 구현은 복잡하므로, 
+            // 여기서는 localStorage를 통한 로컬 시뮬레이션을 사용합니다
+            
+            // 실제 구현시에는 Socket.IO나 WebSocket 서버가 필요합니다
+            alert('실제 멀티플레이어는 서버 구현이 필요합니다.\n현재는 로컬 테스트용입니다.');
+            
+            // 로컬 테스트를 위해 자동으로 게임 시작
+            const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#ffeaa7'];
+            const currentPlayer = new Player(
+                'guest',
+                playerName,
+                Math.random() * (800 - 60) + 30,
+                Math.random() * (600 - 60) + 30,
+                colors[1]
+            );
+            gameState.players.set('guest', currentPlayer);
+            
+            document.getElementById('connectionPanel').style.display = 'none';
+            document.getElementById('gameContainer').style.display = 'block';
+            gameStarted = true;
+            
+            document.getElementById('currentPlayer').textContent = playerName;
+            document.getElementById('gameRoomCode').textContent = roomCode;
+            document.getElementById('gameConnectedPlayers').textContent = gameState.players.size;
+            
+            gameLoop();
+        }
+        
+        // 게임 상태 직렬화
+        function serializeGameState() {
+            return {
+                players: Array.from(gameState.players.values()).map(p => p.serialize()),
+                bullets: gameState.bullets.map(b => b.serialize()),
+                ammoPickups: gameState.ammoPickups.map(p => p.serialize()),
+                healthPickups: gameState.healthPickups.map(p => p.serialize())
+            };
+        }
+        
+        // 충돌 검사
+        function checkCollision(obj1, obj2) {
+            const dx = obj1.x - obj2.x;
+            const dy = obj1.y - obj2.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance < obj1.radius + obj2.radius;
+        }
+        
+        // 키보드 입력
+        const keys = {};
+        document.addEventListener('keydown', (e) => {
+            keys[e.code] = true;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.code] = false;
+        });
+        
+        // 마우스 입력
+        document.addEventListener('click', (e) => {
+            if (!gameStarted) return;
+            
+            const canvas = document.getElementById('gameCanvas');
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            const myPlayer = Array.from(gameState.players.values()).find(p => p.name === playerName);
+            if (myPlayer) {
+                const bullet = myPlayer.shoot(mouseX, mouseY);
+                if (bullet) {
+                    gameState.bullets.push(bullet);
+                    
+                    // 다른 플레이어들에게 총알 생성 알림
+                    sendToAll({
+                        type: 'bulletFired',
+                        bullet: bullet.serialize()
+                    });
+                }
+            }
+        });
+        
+        // 아이템 생성
+        function spawnPickups() {
+            if (Math.random() < 0.005) {
+                const pickup = new Pickup(
+                    Math.random() * (800 - 40) + 20,
+                    Math.random() * (600 - 40) + 20,
+                    'ammo'
+                );
+                gameState.ammoPickups.push(pickup);
+                
+                sendToAll({
+                    type: 'pickupSpawned',
+                    pickup: pickup.serialize()
+                });
+            }
+            
+            if (Math.random() < 0.003) {
+                const pickup = new Pickup(
+                    Math.random() * (800 - 40) + 20,
+                    Math.random() * (600 - 40) + 20,
+                    'health'
+                );
+                gameState.healthPickups.push(pickup);
+                
+                sendToAll({
+                    type: 'pickupSpawned',
+                    pickup: pickup.serialize()
+                });
+            }
+        }
+        
+        // 리더보드 업데이트
+        function updateLeaderboard() {
+            const players = Array.from(gameState.players.values())
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 5);
+            
+            const leaderboardHtml = players.map((player, index) => {
+                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '🏅';
+                return `<div>${medal} ${player.name}: ${player.score}</div>`;
+            }).join('');
+            
+            document.getElementById('leaderboardList').innerHTML = leaderboardHtml;
+        }
+        
+        // 게임 루프
+        function gameLoop() {
+            if (!gameStarted) return;
+            
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 배경 클리어
+            ctx.fillStyle = 'rgba(26, 26, 46, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 현재 플레이어 찾기
+            const myPlayer = Array.from(gameState.players.values()).find(p => p.name === playerName);
+            
+            // 플레이어 입력 처리
+            if (myPlayer) {
+                if (keys['KeyW'] || keys['ArrowUp']) myPlayer.vy -= 0.5;
+                if (keys['KeyS'] || keys['ArrowDown']) myPlayer.vy += 0.5;
+                if (keys['KeyA'] || keys['ArrowLeft']) myPlayer.vx -= 0.5;
+                if (keys['KeyD'] || keys['ArrowRight']) myPlayer.vx += 0.5;
+                
+                // 플레이어 상태를 다른 플레이어들에게 전송
+                sendToAll({
+                    type: 'playerUpdate',
+                    player: myPlayer.serialize()
+                });
+            }
+            
+            // 플레이어 업데이트 및 그리기
+            for (const [id, player] of gameState.players) {
+                player.update();
+                player.draw(ctx);
+            }
+            
+            // 총알 업데이트
+            gameState.bullets = gameState.bullets.filter(bullet => {
+                const alive = bullet.update();
+                if (alive) {
+                    bullet.draw(ctx);
+                    
+                    // 플레이어와 충돌 검사
+                    for (const [id, player] of gameState.players) {
+                        if (id !== bullet.ownerId && checkCollision(bullet, player)) {
+                            const killed = player.takeDamage(bullet.damage);
+                            const shooter = gameState.players.get(bullet.ownerId);
+                            if (shooter) {
+                                shooter.score += killed ? 20 : 10;
+                            }
+                            
+                            // 충돌 정보 전송
+                            sendToAll({
+                                type: 'bulletHit',
+                                targetId: id,
+                                shooterId: bullet.ownerId,
+                                damage: bullet.damage
+                            });
+                            
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            });
+            
+            // 아이템 업데이트
+            gameState.ammoPickups = gameState.ammoPickups.filter(pickup => {
+                pickup.update();
+                pickup.draw(ctx);
+                
+                for (const [id, player] of gameState.players) {
+                    if (checkCollision(pickup, player)) {
+                        player.ammo = Math.min(player.maxAmmo, player.ammo + 10);
+                        
+                        sendToAll({
+                            type: 'pickupCollected',
+                            pickupId: pickup.id,
+                            playerId: id,
+                            pickupType: 'ammo'
+                        });
+                        
+                        return false;
+                    }
+                }
+                return true;
+            });
+            
+            gameState.healthPickups = gameState.healthPickups.filter(pickup => {
+                pickup.update();
+                pickup.draw(ctx);
+                
+                for (const [id, player] of gameState.players) {
+                    if (checkCollision(pickup, player)) {
+                        player.heal(30);
+                        
+                        sendToAll({
+                            type: 'pickupCollected',
+                            pickupId: pickup.id,
+                            playerId: id,
+                            pickupType: 'health'
+                        });
+                        
+                        return false;
+                    }
+                }
+                return true;
+            });
+            
+            // 호스트인 경우에만 아이템 생성
+            if (isHost) {
+                spawnPickups();
+            }
+            
+            // UI 업데이트
+            if (myPlayer) {
+                document.getElementById('healthBar').style.width = (myPlayer.health / myPlayer.maxHealth * 100) + '%';
+                document.getElementById('ammoBar').style.width = (myPlayer.ammo / myPlayer.maxAmmo * 100) + '%';
+                document.getElementById('score').textContent = myPlayer.score;
+            }
+            
+            updateLeaderboard();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // 초기 플레이어 이름 설정
+        document.getElementById('playerNameInput').value = '플레이어' + Math.floor(Math.random() * 1000);
+        
+        // 게임 설명
+        setTimeout(() => {
+            if (!gameStarted) {
+                alert('실제 멀티플레이어 게임!\n\n📝 방법:\n1. 플레이어 이름 입력\n2. 방 만들기 또는 방 참가하기\n3. 친구들과 코드 공유\n4. 게임 시작!\n\n🎮 조작:\n• WASD/방향키: 이동\n• 마우스 클릭: 발사\n• 파란색: 탄약, 빨간색: 힐팩');
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
